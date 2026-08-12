@@ -1,0 +1,6 @@
+@NFLTop100ASP_HostAddress = http://localhost:5068
+
+GET {{NFLTop100ASP_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

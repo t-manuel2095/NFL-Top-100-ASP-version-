@@ -1,0 +1,14 @@
+## Visual Studio
+.vs/
+*.user
+*.suo
+*.useros
+*.sln.docstates
+
+## Build
+bin/
+obj/
+
+## ASP.NET Core DIY / Cursor plan (keep local only)
+**/asp.net_core_diy_guide*.plan.md
+**/asp.net_core_diy_guide*.md
