@@ -1,6 +1,12 @@
 ﻿using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 
+/*
+ * This is an entity model: a C# class that maps to one database table so EF Core can read rows as objects. [Table("User")] and [Column] / [Key] 
+ * tell EF which table and columns to use when C# names differ from SQL. Property types must match the real SQL types (double for SQL float, 
+ * short for smallint, and so on). In general, the entity mirrors storage. You map it to a DTO before sending JSON to the client.
+ */
+
 namespace NFLTop100ASP.Models
 {
     [Table("User")]
@@ -26,9 +32,9 @@ namespace NFLTop100ASP.Models
         public int? Yds3 { get; set; }
         public int? TD3 { get; set; }
         public int? Solo { get; set; }
-        public float? Sk {  get; set; }
+        public double? Sk {  get; set; }
         public int? Int2 { get; set; }
-        public int? Year { get; set; }
+        public short? Year { get; set; }
 
         [Key]
         [Column("Id")]

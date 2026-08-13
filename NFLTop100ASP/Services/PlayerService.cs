@@ -3,6 +3,13 @@ using NFLTop100ASP.Data;
 using NFLTop100ASP.Dtos;
 using NFLTop100ASP.Models;
 
+/*
+ * This is a service class: it holds the app’s player logic, querying the database, filtering, counting, resolving images, and mapping entities to DTOs. 
+ * It gets AppDbContext and IWebHostEnvironment through the constructor (dependency injection) instead of creating them itself. Controllers call these methods. 
+ * They shouldn’t talk to EF or the filesystem directly. In general, put business/data work in a service so HTTP code stays thin and the same logic can be reused 
+ * or tested without a web request.
+ */
+
 namespace NFLTop100ASP.Services
 {
     public class PlayerService : IPlayerService

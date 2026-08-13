@@ -1,0 +1,999 @@
+class PlayerService {
+    constructor() {
+        this.baseUrl = '/api/players';
+    }
+
+    async getAllPlayers() {
+        try {
+            const response = await fetch(`${this.baseUrl}/`);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            return await response.json();
+        } catch (error) {
+            throw new Error(`Failed to fetch players: ${error.message}`);
+        }
+    }
+
+    async searchPlayers(searchTerm) {
+        try {
+            const params = new URLSearchParams({ search: searchTerm });
+            const response = await fetch(`${this.baseUrl}/?${params}`);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            return await response.json();
+        } catch (error) {
+            throw new Error(`Search failed: ${error.message}`);
+        }
+    }
+
+    async getPlayerByName(name) {
+        try {
+            const response = await fetch(`${this.baseUrl}/?search=${encodeURIComponent(name)}`);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const players = await response.json();
+            return players.length > 0 ? players[0] : null;
+        } catch (error) {
+            throw new Error(`Failed to fetch player: ${error.message}`);
+        }
+    }
+
+    async getPositions() {
+        try {
+            const response = await fetch(`${this.baseUrl}/positions/`);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            return await response.json();
+        } catch (error) {
+            throw new Error(`Failed to fetch positions: ${error.message}`);
+        }
+    }
+
+    async getTeams() {
+        try {
+            const response = await fetch(`${this.baseUrl}/teams/`);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            return await response.json();
+        } catch (error) {
+            throw new Error(`Failed to fetch teams: ${error.message}`);
+        }
+    }
+
+    async getPlayerCount() {
+        try {
+            const response = await fetch(`${this.baseUrl}/count/`);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            return await response.json();
+        } catch (error) {
+            throw new Error(`Failed to fetch player count: ${error.message}`);
+        }
+    }
+}
+
+class AppState {
+    constructor() {
+        this.allPlayers = [];
+        this.filteredPlayers = [];
+        
+        this.filters = {
+            year: null,
+            position: null,
+            team: null,
+            search: '',
+            rank: null,
+        };
+        
+        this.ui = {
+            loading: false,
+            error: false,
+            errorMessage: ''
+        };
+        
+        this.positions = [];
+        this.teams = [];
+    }
+
+    setAllPlayers(players) {
+        this.allPlayers = players;
+        this.applyFilters();
+    }
+
+    setFilteredPlayers(players) {
+        this.filteredPlayers = players;
+    }
+
+    updateFilter(filterName, value) {
+        this.filters[filterName] = value;
+        this.applyFilters();
+    }
+
+    setLoading(isLoading) {
+        this.ui.loading = isLoading;
+    }
+
+    setError(hasError, message = '') {
+        this.ui.error = hasError;
+        this.ui.errorMessage = message;
+    }
+
+    applyFilters() {
+        let results = this.allPlayers;
+        const searchActive = Boolean(this.filters.search && this.filters.search.trim());
+        const positionActive = Boolean(this.filters.position);
+        const teamActive = Boolean(this.filters.team);
+        const rankActive = this.filters.rank !== null && this.filters.rank !== '';
+        const applyYearFilter = this.filters.year && !(useDefaultYearView && (searchActive || positionActive || teamActive || rankActive));
+        
+        if (applyYearFilter) {
+            results = results.filter(p => p.year === parseInt(this.filters.year, 10));
+        }
+        if (searchActive) {
+            results = results.filter(p => 
+                p.player.toLowerCase().includes(this.filters.search.toLowerCase())
+            );
+        }
+        
+        if (positionActive) {
+            results = results.filter(p => playerMatchesPositionFilter(p, this.filters.position));
+        }
+        if (teamActive) {
+            results = results.filter(p => getTeamBadgeAbbr(p.tm) === this.filters.team);
+        }
+        if (rankActive) {
+            results = results.filter(p => p.rank === parseInt(this.filters.rank, 10));
+        }
+        
+        if (searchActive || positionActive || teamActive || rankActive) {
+            results.sort((a, b) => a.year - b.year || a.rank - b.rank);
+        } else if (this.filters.year) {
+            results.sort((a, b) => a.rank - b.rank);
+        }
+        
+        this.filteredPlayers = results;
+    }
+
+    clearFilters() {
+        this.filters = { year: null, position: null, team: null, search: '', rank: null };
+        this.applyFilters();
+    }
+}
+
+// Helper Functions
+function fmtStat(val) {
+    return val === null || val === undefined ? '-' : val;
+}
+
+function getPlayerImageUrl(player) {
+    // Images are stored in: /static/images/{player_name}/{year}/
+    // Return the directory path, and the image tag will handle finding the actual file
+    
+    const playerName = encodeURIComponent(player.player);
+    const year = player.year || 2025;
+    
+    // Return a directory path - the backend or frontend will need to resolve the actual filename
+    return `/static/images/${playerName}/${year}/`;
+}
+
+function getPositionBadgeColor(position) {
+    const positionColors = {
+        'QB': '#e74c3c',
+        'RB': '#3498db',
+        'WR': '#2ecc71',
+        'TE': '#f39c12',
+        'OL': '#9b59b6',
+        'DL': '#e67e22',
+        'LB': '#1abc9c',
+        'CB': '#34495e',
+        'S': '#95a5a6',
+        'K': '#16a085'
+    };
+    return positionColors[position] || '#95a5a6';
+}
+
+// DB / legacy abbreviations → standard badge abbreviations
+const teamAbbrToDisplay = {
+    GNB: 'GB',
+    NWE: 'NE',
+    KAN: 'KC',
+    NOR: 'NO',
+    SFO: 'SF',
+    TAM: 'TB',
+    LVR: 'LV',
+    OAK: 'LV',
+    SDG: 'LAC',
+    STL: 'LAR',
+};
+
+function getTeamBadgeAbbr(tm) {
+    if (!tm) return tm;
+    return teamAbbrToDisplay[tm] || tm;
+}
+
+// Team colors (standard abbreviations) - Assigned the colors based on the team's primary color from Wikipedia
+const teamColors = {
+    'ARI': '#97233F',
+    'ATL': '#000000',
+    'BAL': '#241773',
+    'BUF': '#00338D',
+    'CAR': '#0085CA',
+    'CHI': '#0B162A',
+    'CIN': '#FB4F14',
+    'CLE': '#311D00',
+    'DAL': '#003594',
+    'DEN': '#FB4F14',
+    'DET': '#0076B6',
+    'GB': '#203731',
+    'HOU': '#03202F',
+    'IND': '#002C5F',
+    'JAX': '#006687',
+    'KC': '#E31828',
+    'LV': '#000000',
+    'LAC': '#0080D4',
+    'LAR': '#003594',
+    'MIA': '#00A3E0',
+    'MIN': '#4F2683',
+    'NE': '#002244',
+    'NO': '#D3BC8D',
+    'NYG': '#0B3278',
+    'NYJ': '#125740',
+    'PHI': '#004953',
+    'PIT': '#27251F',
+    'SF': '#AA0000',
+    'SEA': '#0C2C56',
+    'TB': '#D50A0A',
+    'TEN': '#0C2C56',
+    'WAS': '#5A1930',
+};
+
+const teamNames = {
+    'ARI': 'Cardinals',
+    'ATL': 'Falcons',
+    'BAL': 'Ravens',
+    'BUF': 'Bills',
+    'CAR': 'Panthers',
+    'CHI': 'Bears',
+    'CIN': 'Bengals',
+    'CLE': 'Browns',
+    'DAL': 'Cowboys',
+    'DEN': 'Broncos',
+    'DET': 'Lions',
+    'GB': 'Packers',
+    'GNB': 'Packers',
+    'HOU': 'Texans',
+    'IND': 'Colts',
+    'JAX': 'Jaguars',
+    'KC': 'Chiefs',
+    'KAN': 'Chiefs',
+    'LAC': 'Chargers',
+    'LAR': 'Rams',
+    'LV': 'Raiders',
+    'LVR': 'Raiders',
+    'MIA': 'Dolphins',
+    'MIN': 'Vikings',
+    'NE': 'Patriots',
+    'NWE': 'Patriots',
+    'NO': 'Saints',
+    'NOR': 'Saints',
+    'NYG': 'Giants',
+    'NYJ': 'Jets',
+    'OAK': 'Raiders',
+    'PHI': 'Eagles',
+    'PIT': 'Steelers',
+    'SDG': 'Chargers',
+    'SEA': 'Seahawks',
+    'SF': '49ers',
+    'SFO': '49ers',
+    'STL': 'Rams',
+    'TB': 'Buccaneers',
+    'TAM': 'Buccaneers',
+    'TEN': 'Titans',
+    'WAS': 'Commanders',
+};
+
+function getTeamDisplayName(abbr) {
+    return teamNames[abbr] || abbr;
+}
+
+function getTeamColor(teamAbbr) {
+    if (!teamAbbr || teamAbbr === null || teamAbbr === '') {
+        return '#FFFFFF';
+    }
+    return teamColors[getTeamBadgeAbbr(teamAbbr)] || '#000000';
+}
+
+function getTextColor(bgColor) {
+    const hex = bgColor.replace('#', '');
+    const r = parseInt(hex.substr(0, 2), 16);
+    const g = parseInt(hex.substr(2, 2), 16);
+    const b = parseInt(hex.substr(4, 2), 16);
+    const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+    return brightness > 128 ? '#000000' : '#FFFFFF';
+}
+
+const positionGroup = {
+    FB: 'RB',
+    HB: 'RB',
+    TE: 'WR',
+    OT: 'OL',
+    C: 'OL', 
+    G: 'OL',
+    OG: 'OL',
+    T: 'OL',
+    DE: 'DL',
+    DT: 'DL',
+    ILB: 'LB',
+    OLB: 'LB',
+    MLB: 'LB',
+    CB: 'DB',
+    S: 'DB',
+    SS: 'DB',
+    FS: 'DB',
+};
+
+const filterPositions = [
+    'QB', 'RB', 'FB', 'WR', 'TE', 'OL',
+    'DL', 'MLB', 'CB', 'FS', 'S', 'K', 'P',
+];
+
+// Filter dropdown value → DB position codes
+const positionFilterMap = {
+    QB: ['QB'],
+    RB: ['RB', 'HB'],
+    FB: ['FB'],
+    WR: ['WR'],
+    TE: ['TE'],
+    OL: ['OL', 'OT', 'C', 'G', 'OG', 'T'],
+    DL: ['DL', 'DE', 'DT'],
+    MLB: ['MLB', 'ILB', 'OLB', 'LB'],
+    CB: ['CB'],
+    FS: ['FS'],
+    S: ['S', 'SS'],
+    K: ['K'],
+    P: ['P'],
+};
+
+function playerMatchesPositionFilter(player, filterPos) {
+    const matches = positionFilterMap[filterPos];
+    if (!matches) return player.pos === filterPos;
+    return matches.includes(player.pos);
+}
+
+// Hardcoded kicker stats (not in DB)
+const kickerHardcodedStats = {
+    'Justin Tucker|2022': [
+        { label: 'FG: M/A/%', value: '35/37/94.6' },
+        { label: 'PAT: M/A/%', value: '32/32/100' },
+        { label: 'Long', value: '66 yds' },
+        { label: 'Points', value: '137' },
+    ],
+    'Adam Vinatieri|2015': [
+        { label: 'FG: M/A/%', value: '30/31/96.8' },
+        { label: 'PAT: M/A/%', value: '50/50/100' },
+        { label: 'Long', value: '53 yds' },
+        { label: 'Points', value: '140' },
+    ],
+};
+
+function getHardcodedKickerStats(player) {
+    const key = `${player.player}|${player.year}`;
+    return kickerHardcodedStats[key] || null;
+}
+
+function getPrimaryStats(player) {
+    const hardcodedKicker = getHardcodedKickerStats(player);
+    if (hardcodedKicker) return hardcodedKicker;
+
+    const position = positionGroup[player.pos] || player.pos;
+    
+    const stats = {
+        //Offense
+        'QB': [
+            { label: 'TD/INT/Yds', value: `${Number(player.td) || 0}/${Number(player.passing_int) || 0}/${Number(player.yds) || 0}` },
+            { label: 'Pass: Comp/Att/%', value: `${player.cmp ?? 0}/${player.att ?? 0}/${player.att ? ((player.cmp ?? 0) / player.att * 100).toFixed(1) : '0.0'}%` },
+            { label: 'Rush: Yds/Att', value: `${player.yds2 ?? 0}/${player.att2 ?? 0}` },
+            { label: 'Games: Played/Started', value: `${player.g ?? 0}/${player.gs ?? 0}` }
+        ],
+        'RB': [
+            { label: 'Rush: Yds/Att/YPC', value: `${player.yds2 ?? 0}/${player.att2 ?? 0}/${player.att2 ? ((player.yds2 ?? 0) / player.att2).toFixed(1) : '0.0'}` },
+            { label: 'Receiving: Yds/Att/YPR', value: `${player.yds3 ?? 0}/${player.rec ?? 0}/${player.rec ? ((player.yds3 ?? 0) / player.rec).toFixed(1) : '0.0'}` },
+            { label: 'Games Started', value: player.gs || 0 },
+            { label: 'Games Played', value: player.g || 0 }
+        ],
+        'WR': [
+            { label: 'Receiving: Yds/Att', value: `${player.yds3 ?? 0}/${player.rec ?? 0}` },
+            { label: 'Rec Yards', value: player.rec ? ((player.yds3 ?? 0) / player.rec).toFixed(1) : '0.0' },
+            { label: 'Rec TDs', value: player.td3 || 0 },
+            { label: 'Games: Played/Started', value: `${player.g ?? 0}/${player.gs ?? 0}` }
+        ],
+        'OL': [
+            { label: 'Games: Played/Started', value: `${player.g ?? 0}/${player.gs ?? 0}` },
+            { label: 'Solo Tackles', value: player.solo || 0 },
+            { label: '-', value: '-' },
+            { label: '-', value: '-' }
+        ],
+        //Defense
+        'DL': [
+            { label: 'Sacks', value: player.sk || 0 },
+            { label: 'Solo Tackles', value: player.solo || 0 },
+            { label: 'Interceptions', value: player.int2 || 0 },
+            { label: 'Games: Played/Started', value: `${player.g ?? 0}/${player.gs ?? 0}` }
+        ],
+        'LB': [
+            { label: 'Sacks', value: player.sk || 0 },
+            { label: 'Solo Tackles', value: player.solo || 0 },
+            { label: 'Interceptions', value: player.int2 || 0 },
+            { label: 'Games: Played/Started', value: `${player.g ?? 0}/${player.gs ?? 0}` }
+        ],
+        'DB': [
+            { label: 'Interceptions', value: player.int2 || 0 },
+            { label: 'Solo Tackles', value: player.solo || 0 },
+            { label: 'Sacks', value: player.sk || 0 },
+            { label: 'Games: Played/Started', value: `${player.g ?? 0}/${player.gs ?? 0}` }
+        ],
+        //Special Teams
+        'K': [
+            { label: 'Games', value: player.g || 0 },
+            { label: 'Games Started', value: player.gs || 0 },
+            { label: '-', value: '-' },
+            { label: '-', value: '-' }
+        ]
+        
+    };
+    return stats[position] ?? [];
+}
+
+// Default year set on app load (most recent year in data)
+let defaultYear = null;
+let useDefaultYearView = true;
+
+function applyDefaultYearView() {
+    useDefaultYearView = true;
+    if (defaultYear !== null) {
+        appState.filters.year = defaultYear;
+        appState.applyFilters();
+    }
+    const yearSelect = document.getElementById('year-filter');
+    if (yearSelect) yearSelect.value = '';
+}
+
+// NFL MVP by award year; card year Y → MVP from award year Y - 1 (matches stats shift)
+const mvpByAwardYear = {
+    2024: 'Josh Allen',
+    2023: 'Lamar Jackson',
+    2022: 'Patrick Mahomes',
+    2021: 'Aaron Rodgers',
+    2020: 'Aaron Rodgers',
+    2019: 'Lamar Jackson',
+    2018: 'Patrick Mahomes',
+    2017: 'Tom Brady',
+    2016: 'Matt Ryan',
+    2015: 'Cam Newton',
+    2014: 'Aaron Rodgers',
+    2013: 'Peyton Manning',
+    2012: 'Adrian Peterson',
+    2011: 'Aaron Rodgers',
+    2010: 'Tom Brady',
+};
+
+function getMvpForCardYear(cardYear) {
+    const awardYear = parseInt(cardYear, 10) - 1;
+    return mvpByAwardYear[awardYear] || null;
+}
+
+function isPlayerMvpForYear(player) {
+    const mvp = getMvpForCardYear(player.year);
+    return Boolean(mvp && player.player === mvp);
+}
+
+const injuredPlayers = {
+    'Peyton Manning|2011': true,
+    'Robert Mathis|2014': true,
+    'NaVorro Bowman|2014': true,
+    'Kiko Alonso|2014': true,
+    'Jordy Nelson|2015': true,
+    'Maurkice Pouncey|2015': true,
+    'Andrew Luck|2017': true,
+    'Julian Edelman|2017': true,
+    "Le'Veon Bell|2018": true,
+    'Ryan Shazier|2018': true,
+    'A.J. Green|2019': true,
+    'Trent Williams|2019': true,
+    'Von Miller|2020': true,
+    'Danielle Hunter|2020': true,
+    'Brandon Brooks|2020': true,
+    'Michael Thomas|2021': true,
+    'Odell Beckham Jr.|2022': true,
+    'Joe Mixon|2025': true,
+};
+
+function isPlayerInjured(player) {
+    return Boolean(injuredPlayers[`${player.player}|${player.year}`]);
+}
+
+const suspendedPlayers = {
+    'Daryl Washington|2014': true, 
+};
+
+function isPlayerSuspended(player) {
+    return Boolean(suspendedPlayers[`${player.player}|${player.year}`]);
+}
+
+const retiredPlayers = {
+    'Kam Chancellor|2018': true,
+    'Andrew Luck|2019': true,
+
+}
+
+function isPlayerRetired(player) {
+    return Boolean(retiredPlayers[`${player.player}|${player.year}`]);
+}
+
+const DNPPlayers = {
+    'Deshaun Watson|2021': true,
+
+}
+
+function isPlayerDNP(player) {
+    return Boolean(DNPPlayers[`${player.player}|${player.year}`]);
+}
+
+function getYearBadgeHtml(player) {
+    const showYear = shouldShowYearOnCard(player);
+    const isMvp = isPlayerMvpForYear(player);
+    const parts = [];
+
+    if (showYear) {
+        parts.push(`<span class="badge year-badge">${player.year}</span>`);
+    }
+    if (isMvp) {
+        parts.push(`<span class="badge mvp-badge">MVP 🏆</span>`);
+    }
+    if (isPlayerInjured(player)) {
+        parts.push(`<span class="badge injured-badge" title="Injured">✚ Injured</span>`);
+    }
+    if (isPlayerSuspended(player)) {
+        parts.push(`<span class="badge suspended-badge" title="Suspended">X Suspended</span>`);
+    }
+    if (isPlayerRetired(player)) {
+        parts.push(`<span class="badge retired-badge" title="Retired">✌️ Retired</span>`);
+    }
+    if (isPlayerDNP(player)) {
+        parts.push(`<span class="badge dnp-badge" title="DNP">DNP</span>`);
+    }
+    return parts.join('');
+}
+
+// Helper: Check if year filter is active
+function isYearFilterActive() {
+    return appState.filters.year !== null && appState.filters.year !== '';
+}
+
+function isSearchActive() {
+    return Boolean(appState.filters.search && appState.filters.search.trim());
+}
+
+function isPositionFilterActive() {
+    return Boolean(appState.filters.position);
+}
+
+function isTeamFilterActive() {
+    return Boolean(appState.filters.team);
+}
+
+function isRankFilterActive() {
+    return appState.filters.rank !== null && appState.filters.rank !== '';
+}
+
+// Hide year on cards when only the year filter is set (redundant), or for the default year
+function shouldShowYearOnCard(player) {
+    if (isSearchActive()) return true;
+    if (isPositionFilterActive()) return true;
+    if (isTeamFilterActive()) return true;
+    if (isRankFilterActive()) return true;
+    if (isYearFilterActive()) return false;
+    if (defaultYear !== null && parseInt(player.year, 10) === defaultYear) return false;
+    return true;
+}
+
+// Helper: Get display name (playerName or fallback to player)
+function getPlayerDisplayName(player) {
+    return player.playerName || player.player || 'Unknown Player';
+}
+
+// Helper: Generate Wikipedia link if available
+function getWikipediaLink(player) {
+    // Check if wikipedia field exists in player data
+    if (player.wikipedia) {
+        return `<a href="${player.wikipedia}" target="_blank" class="wiki-link" title="View on Wikipedia">📖</a>`;
+    }
+    // Construct Wikipedia URL from player name as fallback
+    const playerName = getPlayerDisplayName(player).replace(/\s+/g, '_');
+    return `<a href="https://en.wikipedia.org/wiki/${playerName}" target="_blank" class="wiki-link" title="View on Wikipedia">📖</a>`;
+}
+
+function createPlayerCard(player) {
+    const primaryStats = getPrimaryStats(player);
+    const badgeColor = getPositionBadgeColor(player.pos);
+    const displayName = getPlayerDisplayName(player);
+    const wikiLink = getWikipediaLink(player);
+    const yearBadge = getYearBadgeHtml(player);
+    const teamColor = getTeamColor(player.tm);
+    const textColor = getTextColor(teamColor);
+    
+    const statsHtml = primaryStats.map(stat => `
+        <div class="stat">
+            <div class="stat-value">${stat.value}</div>
+            <div class="stat-label">${stat.label}</div>
+        </div>
+    `).join('');
+    
+    const card = document.createElement('div');
+    card.className = 'player-card';
+    card.innerHTML = `
+        <div class="player-card-container" style="background-color: ${teamColor}; color: ${textColor};">
+            <img 
+                alt="${displayName}" 
+                class="player-card-image"
+            >
+            <div class="player-card-content">
+                <div class="player-rank">RANK #${player.rank}</div>
+                <div class="player-name-container">
+                    <h2 class="player-name">${displayName} ${wikiLink}</h2>
+                </div>
+                <div class="player-badges">
+                    <span class="badge pos-${player.pos}" style="background-color: ${badgeColor};">${player.pos}</span>
+                    <span class="badge team-badge">${getTeamBadgeAbbr(player.tm) || 'Free agent'}</span>
+                    ${yearBadge}
+                </div>
+                <div class="player-stats">
+                    ${statsHtml}
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Load the correct image filename via API
+    const playerName = encodeURIComponent(player.player);
+    const year = player.year || 2025;
+    const img = card.querySelector('.player-card-image');
+    fetch(`/api/players/image/?player=${playerName}&year=${year}`)
+        .then(response => {
+            if (!response.ok) return null;
+            return response.json();
+        })
+        .then(data => {
+            if (!data?.filename) return;
+            const folder = encodeURIComponent(data.folder || player.player);
+            img.src = `/static/images/${folder}/${year}/${encodeURIComponent(data.filename)}`;
+            img.onerror = () => {
+                img.onerror = null;
+                img.removeAttribute('src');
+            };
+        })
+        .catch(() => {
+            // No image — gray background from CSS remains visible
+        });
+    
+    return card;
+}
+
+// Initialize services
+const playerService = new PlayerService();
+const appState = new AppState();
+
+// DOM Rendering Functions
+function renderLoadingState() {
+    const container = document.getElementById('players-container');
+    if (!container) return;
+    
+    container.innerHTML = `
+        <div class="loading-spinner">
+            <div class="spinner"></div>
+            <p>Loading players...</p>
+        </div>
+    `;
+}
+
+function renderErrorState(error) {
+    const container = document.getElementById('players-container');
+    if (!container) return;
+    
+    container.innerHTML = `
+        <div class="error-state">
+            <p class="error-message">⚠️ ${error}</p>
+            <button onclick="retryLoading()">Retry</button>
+        </div>
+    `;
+}
+
+function renderEmptyState() {
+    const container = document.getElementById('players-container');
+    if (!container) return;
+    
+    container.innerHTML = `
+        <div class="empty-state">
+            <p>No players found matching your filters</p>
+            <button onclick="clearAllFilters()">Clear Filters</button>
+        </div>
+    `;
+}
+
+function renderPositionDropdown() {
+    const select = document.getElementById('position-filter');
+    if (!select) return;
+    
+    select.innerHTML = '<option value="">All Positions</option>';
+    
+    filterPositions.forEach(pos => {
+        const option = document.createElement('option');
+        option.value = pos;
+        option.textContent = pos;
+        select.appendChild(option);
+    });
+}
+
+function renderYearDropdown(availableYears) {
+    const select = document.getElementById('year-filter');
+    if (!select) return;
+    
+    select.innerHTML = '<option value="">All Years</option>';
+    
+    // Sort years in descending order
+    const sortedYears = [...availableYears].sort((a, b) => b - a);
+    
+    sortedYears.forEach(year => {
+        const option = document.createElement('option');
+        option.value = year;
+        option.textContent = year;
+        select.appendChild(option);
+    });
+}
+
+function renderTeamDropdown(teams) {
+    const select = document.getElementById('team-filter');
+    if (!select) return;
+    
+    select.innerHTML = '<option value="">All Teams</option>';
+    
+    const byCanonical = new Map();
+    for (const abbr of teams) {
+        if (!abbr) continue;
+        const key = getTeamBadgeAbbr(abbr);
+        if (!byCanonical.has(key)) {
+            byCanonical.set(key, getTeamDisplayName(abbr));
+        }
+    }
+    const sortedTeams = [...byCanonical.entries()]
+        .map(([abbr, name]) => ({ abbr, name }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+    
+    sortedTeams.forEach(({ abbr, name }) => {
+        const option = document.createElement('option');
+        option.value = abbr;
+        option.textContent = name;
+        select.appendChild(option);
+    });
+}
+
+function renderPlayerCards(players) {
+    const container = document.getElementById('players-container');
+    if (!container) return;
+    
+    container.innerHTML = '';
+    
+    if (players.length === 0) {
+        renderEmptyState();
+        return;
+    }
+    
+    players.forEach(player => {
+        container.appendChild(createPlayerCard(player));
+    });
+}
+
+// Load data on page load
+async function initializeApp() {
+    try {
+        renderLoadingState();
+
+        // Load all players
+        const players = await playerService.getAllPlayers();
+        appState.setAllPlayers(players);
+
+        // Get unique years from players data
+        const uniqueYears = [...new Set(players.map(p => p.year).filter(y => y))];
+
+        // Render year dropdown with actual data years
+        renderYearDropdown(uniqueYears);
+
+        renderPositionDropdown();
+
+        // Load teams for dropdown
+        const teamsResponse = await playerService.getTeams();
+        appState.teams = teamsResponse.teams || teamsResponse;
+        renderTeamDropdown(appState.teams);
+
+        // Set default to most recent year (dropdown stays on All Years)
+        defaultYear = Math.max(...uniqueYears);
+        applyDefaultYearView();
+
+        // Render players with default year filter
+        renderPlayerCards(appState.filteredPlayers);
+    } catch (error) {
+        renderErrorState(error.message);
+    }
+}
+
+// Retry function
+async function retryLoading() {
+    await initializeApp();
+}
+
+// Start app when DOM is ready
+document.addEventListener('DOMContentLoaded', initializeApp);
+
+// Debounce function for search
+function debounce(func, delay) {
+    let timeoutId;
+    return function(...args) {
+        clearTimeout(timeoutId);
+        timeoutId = setTimeout(() => func(...args), delay);
+    };
+}
+
+// Filter event handlers
+function handleYearFilter(year) {
+    useDefaultYearView = false;
+    appState.updateFilter('year', year || null);
+    renderPlayers();
+}
+
+function handlePositionFilter(position) {
+    appState.updateFilter('position', position || null);
+    renderPlayers();
+}
+
+function handleTeamFilter(team) {
+    appState.updateFilter('team', team || null);
+    renderPlayers();
+}
+
+function handleSearch(searchTerm) {
+    appState.updateFilter('search', searchTerm);
+    renderPlayers();
+}
+
+function isValidRank(value) {
+    const rank = parseInt(value, 10);
+    return !isNaN(rank) && rank >= 1 && rank <= 100;
+}
+
+function setRankFilterError(message) {
+    const errorEl = document.getElementById('rank-filter-error');
+    const input = document.getElementById('rank-filter-input');
+    if (errorEl) errorEl.textContent = message;
+    if (input) input.classList.toggle('input-invalid', Boolean(message));
+}
+
+function handleRankFilterSubmit() {
+    const input = document.getElementById('rank-filter-input');
+    if (!input) return;
+
+    const raw = input.value.trim();
+    if (!raw) {
+        setRankFilterError('');
+        appState.updateFilter('rank', null);
+        renderPlayers();
+        return;
+    }
+
+    if (!isValidRank(raw)) {
+        setRankFilterError('Enter a rank between 1 and 100.');
+        return;
+    }
+
+    setRankFilterError('');
+    appState.updateFilter('rank', parseInt(raw, 10));
+    renderPlayers();
+}
+
+// Debounced search handler
+const debouncedSearch = debounce(handleSearch, 300);
+
+// Clear all filters — reset to default year view (2025 data, All Years label)
+function clearAllFilters() {
+    appState.filters.position = null;
+    appState.filters.team = null;
+    appState.filters.search = '';
+    appState.filters.rank = null;
+
+    const positionSelect = document.getElementById('position-filter');
+    const teamSelect = document.getElementById('team-filter');
+    const searchInput = document.getElementById('search-input');
+    const rankInput = document.getElementById('rank-filter-input');
+
+    if (positionSelect) positionSelect.value = '';
+    if (teamSelect) teamSelect.value = '';
+    if (searchInput) searchInput.value = '';
+    if (rankInput) rankInput.value = '';
+    setRankFilterError('');
+
+    applyDefaultYearView();
+    renderPlayers();
+}
+
+// Render players to the grid
+function renderPlayers() {
+    const container = document.getElementById('players-container');
+    if (!container) return;
+    
+    if (appState.filteredPlayers.length === 0) {
+        renderEmptyState();
+        return;
+    }
+    
+    container.innerHTML = '';
+    renderPlayerCards(appState.filteredPlayers);
+}
+
+// Event Listeners Setup
+function setupEventListeners() {
+    // Year filter
+    const yearSelect = document.getElementById('year-filter');
+    if (yearSelect) {
+        yearSelect.addEventListener('change', (e) => {
+            handleYearFilter(e.target.value);
+        });
+    }
+
+    // Position filter
+    const positionSelect = document.getElementById('position-filter');
+    if (positionSelect) {
+        positionSelect.addEventListener('change', (e) => {
+            handlePositionFilter(e.target.value);
+        });
+    }
+
+    // Team filter
+    const teamSelect = document.getElementById('team-filter');
+    if (teamSelect) {
+        teamSelect.addEventListener('change', (e) => {
+            handleTeamFilter(e.target.value);
+        });
+    }
+
+    // Search input with debouncing
+    const searchInput = document.getElementById('search-input');
+    if (searchInput) {
+        searchInput.addEventListener('input', (e) => {
+            debouncedSearch(e.target.value);
+        });
+    }
+
+    // Rank filter — apply on Enter or when leaving the field
+    const rankInput = document.getElementById('rank-filter-input');
+    if (rankInput) {
+        rankInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                handleRankFilterSubmit();
+            }
+        });
+        rankInput.addEventListener('blur', handleRankFilterSubmit);
+    }
+
+    // Clear filters button
+    const clearButton = document.getElementById('clear-filters-btn');
+    if (clearButton) {
+        clearButton.addEventListener('click', clearAllFilters);
+    }
+}
+
+// Update initializeApp to setup event listeners
+const originalInitializeApp = initializeApp;
+async function initializeAppWithListeners() {
+    await originalInitializeApp();
+    setupEventListeners();
+}
+
+// Start app when DOM is ready
+document.addEventListener('DOMContentLoaded', initializeAppWithListeners);
+
+// Remove old initialization code
+// The new rendering functions handle all DOM updates

@@ -1,4 +1,11 @@
-﻿namespace NFLTop100ASP.Dtos
+﻿/*
+ * This is a DTO (Data Transfer Object): a plain object that defines the JSON shape your API sends to the browser. Its property names match what the 
+ * frontend already expects (player, passing_int, sk, and so on), which can differ from database column names on the entity. It has no EF table/column 
+ * attributes, those stay on the model. In general, use DTOs as the public API contract and map from entities into them so the database schema can change 
+ * without breaking clients.
+ */
+
+namespace NFLTop100ASP.Dtos
 {
     public class PlayerDto
     {
@@ -22,8 +29,8 @@
         public int? td3 { get; set; }
         public int? solo {  get; set; }
         public int? int2 { get; set; }
-        public float? sk { get; set; }
-        public int? year { get; set; }
+        public double? sk { get; set; }
+        public short? year { get; set; }
 
     }
 }
