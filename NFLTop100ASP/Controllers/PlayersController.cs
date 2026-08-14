@@ -22,11 +22,28 @@ namespace NFLTop100ASP.Controllers
             _players = players;
         }
 
+        private const int MinYear = 2010;
+        private const int MaxYear = 2030;
+        private const int MaxNameLength = 50;
+        private const int MaxFilterLength = 50;
+
         //`GET /api/players/`
         [HttpGet]
         public async Task<ActionResult<List<PlayerDto>>> GetPlayers([FromQuery] int? year, [FromQuery] string? pos,
                                                                     [FromQuery] string? tm, [FromQuery] string? search)
         {
+            if (year.HasValue && (year.Value < MinYear || year.Value > MaxYear))
+                return BadRequest(new { error = $"year must be between {MinYear} and {MaxYear}" });
+
+            if (pos is { Length: > MaxFilterLength })
+                return BadRequest(new { error = $"pos must be {MaxFilterLength} characters or fewer" });
+
+            if (tm is { Length: > MaxFilterLength })
+                return BadRequest(new { error = $"tm must be {MaxFilterLength} characters or fewer" });
+
+            if (search is { Length: > MaxFilterLength })
+                return BadRequest(new { error = $"search must be {MaxFilterLength} characters or fewer" });
+
             var result = await _players.GetPlayersAsync(year, pos, tm, search);
             return Ok(result);
         }
@@ -62,9 +79,14 @@ namespace NFLTop100ASP.Controllers
 
         public async Task <ActionResult<Image>> GetImage([FromQuery] string player, [FromQuery] string year)
         {
-            // image
             if (string.IsNullOrWhiteSpace(player) || string.IsNullOrWhiteSpace(year))
                 return BadRequest(new { error = "player and year parameters required" });
+
+            if (player.Length > MaxNameLength)
+                return BadRequest(new { error = $"player must be {MaxNameLength} characters or fewer" });
+
+            if (!int.TryParse(year, out var yearValue) || yearValue < MinYear || yearValue > MaxYear)
+                return BadRequest(new { error = $"year must be an integer between {MinYear} and {MaxYear}" });
 
             var result = await _players.ResolveImageAsync(player, year);
 

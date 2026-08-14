@@ -42,7 +42,7 @@ app.MapGet("/", () => Results.File(
     Path.Combine(app.Environment.WebRootPath!, "index.html"),
     "text/html"));
 
-// Single about route only — /about and /about/ both match and conflict if both are mapped
+// Single about route only ï¿½ /about and /about/ both match and conflict if both are mapped
 app.MapGet("/about", () => Results.File(
     Path.Combine(app.Environment.WebRootPath!, "about.html"),
     "text/html"));
